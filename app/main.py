@@ -57,8 +57,11 @@ def get_session_with_login():
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-            }
+            },
+            verify=True  # Ensure SSL verification
         )
+        
+        print("Initial cookies:", session.cookies.get_dict())
         
         # Parse the login page
         soup = BeautifulSoup(login_page.text, 'html.parser')
@@ -66,10 +69,11 @@ def get_session_with_login():
         
         # Get all hidden fields from the form
         login_data = {
-            "Bugzilla_login": BUGZILLA_EMAIL,
-            "Bugzilla_password": BUGZILLA_PASSWORD,
+            "Bugzilla_login": BUGZILLA_EMAIL.strip(),  # Ensure no whitespace
+            "Bugzilla_password": BUGZILLA_PASSWORD.strip(),  # Ensure no whitespace
             "GoAheadAndLogIn": "Log in",
-            "Bugzilla_remember": "on"
+            "Bugzilla_remember": "on",
+            "Bugzilla_restrictlogin": "off"  # Allow login from different IPs
         }
         
         if login_form:
@@ -83,7 +87,7 @@ def get_session_with_login():
         
         print("Login data prepared:", {k: v for k, v in login_data.items() if k != 'Bugzilla_password'})
         
-        # Perform login
+        # Perform login with specific headers
         login_response = session.post(
             f"{BUGZILLA_URL}/index.cgi",
             data=login_data,
@@ -92,32 +96,53 @@ def get_session_with_login():
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
                 "Origin": BUGZILLA_URL,
-                "Referer": f"{BUGZILLA_URL}/index.cgi?GoAheadAndLogIn=1"
+                "Referer": f"{BUGZILLA_URL}/index.cgi?GoAheadAndLogIn=1",
+                "Connection": "keep-alive",
+                "DNT": "1",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-User": "?1"
             },
             allow_redirects=True
         )
         
         print(f"Login response status: {login_response.status_code}")
-        print(f"Login cookies: {session.cookies.get_dict()}")
+        print(f"Login response URL: {login_response.url}")
+        print(f"Login cookies after post: {session.cookies.get_dict()}")
         
-        # Verify login success
-        if 'Bugzilla_login' not in session.cookies:
-            print("Login failed - no login cookie found")
-            print("Response content preview:", login_response.text[:500])
+        # Check response content for error messages
+        if "The username or password you entered is not valid" in login_response.text:
+            print("Invalid credentials error found in response")
             raise HTTPException(
                 status_code=401,
-                detail="Login failed - authentication error"
+                detail="Invalid username or password"
+            )
+        
+        # Verify all required cookies are present
+        required_cookies = ['Bugzilla_login', 'Bugzilla_logincookie']
+        missing_cookies = [cookie for cookie in required_cookies if cookie not in session.cookies]
+        
+        if missing_cookies:
+            print(f"Missing required cookies: {missing_cookies}")
+            print("Full response content:", login_response.text[:1000])
+            raise HTTPException(
+                status_code=401,
+                detail=f"Login failed - missing cookies: {', '.join(missing_cookies)}"
             )
         
         # Make a test request to verify login
-        test_response = session.get(f"{BUGZILLA_URL}/report.cgi?saved_report_id={REPORT_SAVED_ID}")
+        test_response = session.get(
+            f"{BUGZILLA_URL}/report.cgi?saved_report_id={REPORT_SAVED_ID}",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+            }
+        )
         
-        if test_response.status_code != 200:
-            print(f"Test request failed with status: {test_response.status_code}")
-            raise HTTPException(
-                status_code=401,
-                detail="Failed to access report after login"
-            )
+        print(f"Test request status: {test_response.status_code}")
+        print(f"Final cookies: {session.cookies.get_dict()}")
         
         if "Log in to Bugzilla" in test_response.text:
             print("Still getting login page after authentication")
