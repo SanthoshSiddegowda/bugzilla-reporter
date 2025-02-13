@@ -46,46 +46,85 @@ if missing_vars:
 REPORT_URL = f"{BUGZILLA_URL}/report.cgi"
 
 def get_session_with_login():
-    session = requests.Session()
-    
-    # First get the login page to get any CSRF token if needed
-    login_page = session.get(f"{BUGZILLA_URL}/index.cgi")
-    
-    # Login to Bugzilla with proper form data
-    login_data = {
-        "Bugzilla_login": BUGZILLA_EMAIL,
-        "Bugzilla_password": BUGZILLA_PASSWORD,
-        "GoAheadAndLogIn": "Log in",
-        "Bugzilla_remember": "on",
-        "Bugzilla_restrictlogin": "on"
-    }
-    
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Referer": f"{BUGZILLA_URL}/index.cgi"
-    }
-    
-    response = session.post(
-        f"{BUGZILLA_URL}/index.cgi",
-        data=login_data,
-        headers=headers,
-        allow_redirects=True
-    )
-    
-    # Print response for debugging
-    print("Login Response Status:", response.status_code)
-    print("Login Response URL:", response.url)
-    
-    # More detailed login check
-    if "index.cgi?logout=1" not in response.text:
-        if "The username or password you entered is not valid" in response.text:
-            raise HTTPException(status_code=401, detail="Invalid username or password")
-        elif "You must log in to access" in response.text:
-            raise HTTPException(status_code=401, detail="Login required")
-        else:
-            raise HTTPException(status_code=401, detail="Login failed. Please check your credentials.")
-    
-    return session
+    try:
+        session = requests.Session()
+        
+        # Print debug info before login attempt
+        print(f"Attempting login to: {BUGZILLA_URL}")
+        print(f"Using email: {BUGZILLA_EMAIL}")
+        
+        # Get login page first
+        login_page = session.get(
+            f"{BUGZILLA_URL}/index.cgi",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+        )
+        print(f"Login page status: {login_page.status_code}")
+        
+        # Login data
+        login_data = {
+            "Bugzilla_login": BUGZILLA_EMAIL,
+            "Bugzilla_password": BUGZILLA_PASSWORD,
+            "GoAheadAndLogIn": "Log in"
+        }
+        
+        # Headers that mimic a browser
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Origin": BUGZILLA_URL,
+            "Referer": f"{BUGZILLA_URL}/index.cgi"
+        }
+        
+        # Perform login
+        response = session.post(
+            f"{BUGZILLA_URL}/index.cgi",
+            data=login_data,
+            headers=headers,
+            allow_redirects=True
+        )
+        
+        # Debug info after login attempt
+        print(f"Login response status: {response.status_code}")
+        print(f"Login response URL: {response.url}")
+        print(f"Cookies: {session.cookies.get_dict()}")
+        
+        # Check if we got any cookies
+        if not session.cookies.get_dict():
+            raise HTTPException(
+                status_code=401,
+                detail="No session cookies received. Login failed."
+            )
+        
+        # Verify login by making a test request
+        test_url = f"{BUGZILLA_URL}/user_prefs.cgi"
+        test_response = session.get(test_url)
+        print(f"Test request status: {test_response.status_code}")
+        
+        # Check if we're still logged in
+        if "Log in to Bugzilla" in test_response.text:
+            raise HTTPException(
+                status_code=401,
+                detail="Login verification failed. Please check your credentials."
+            )
+        
+        print("Login successful!")
+        return session
+        
+    except requests.RequestException as e:
+        print(f"Network error during login: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Network error during login: {str(e)}"
+        )
+    except Exception as e:
+        print(f"Unexpected error during login: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Login error: {str(e)}"
+        )
 
 def post_to_google_chat(teams_data):
     # Find OS team data
