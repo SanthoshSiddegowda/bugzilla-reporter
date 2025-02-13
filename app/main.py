@@ -49,81 +49,97 @@ def get_session_with_login():
     try:
         session = requests.Session()
         
-        # Print debug info before login attempt
         print(f"Attempting login to: {BUGZILLA_URL}")
-        print(f"Using email: {BUGZILLA_EMAIL}")
         
-        # Get login page first
+        # First get the login page to get the token
         login_page = session.get(
-            f"{BUGZILLA_URL}/index.cgi",
+            f"{BUGZILLA_URL}/index.cgi?GoAheadAndLogIn=1",
             headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
             }
         )
-        print(f"Login page status: {login_page.status_code}")
         
-        # Login data
+        # Parse the login page
+        soup = BeautifulSoup(login_page.text, 'html.parser')
+        login_form = soup.find('form', {'id': 'login'})
+        
+        # Get all hidden fields from the form
         login_data = {
             "Bugzilla_login": BUGZILLA_EMAIL,
             "Bugzilla_password": BUGZILLA_PASSWORD,
-            "GoAheadAndLogIn": "Log in"
+            "GoAheadAndLogIn": "Log in",
+            "Bugzilla_remember": "on"
         }
         
-        # Headers that mimic a browser
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Origin": BUGZILLA_URL,
-            "Referer": f"{BUGZILLA_URL}/index.cgi"
-        }
+        if login_form:
+            for hidden in login_form.find_all('input', type='hidden'):
+                login_data[hidden['name']] = hidden['value']
+        
+        # Get the token from cookie
+        login_token = session.cookies.get('Bugzilla_login_request_cookie')
+        if login_token:
+            login_data['token'] = login_token
+        
+        print("Login data prepared:", {k: v for k, v in login_data.items() if k != 'Bugzilla_password'})
         
         # Perform login
-        response = session.post(
+        login_response = session.post(
             f"{BUGZILLA_URL}/index.cgi",
             data=login_data,
-            headers=headers,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Origin": BUGZILLA_URL,
+                "Referer": f"{BUGZILLA_URL}/index.cgi?GoAheadAndLogIn=1"
+            },
             allow_redirects=True
         )
         
-        # Debug info after login attempt
-        print(f"Login response status: {response.status_code}")
-        print(f"Login response URL: {response.url}")
-        print(f"Cookies: {session.cookies.get_dict()}")
+        print(f"Login response status: {login_response.status_code}")
+        print(f"Login cookies: {session.cookies.get_dict()}")
         
-        # Check if we got any cookies
-        if not session.cookies.get_dict():
+        # Verify login success
+        if 'Bugzilla_login' not in session.cookies:
+            print("Login failed - no login cookie found")
+            print("Response content preview:", login_response.text[:500])
             raise HTTPException(
                 status_code=401,
-                detail="No session cookies received. Login failed."
+                detail="Login failed - authentication error"
             )
         
-        # Verify login by making a test request
-        test_url = f"{BUGZILLA_URL}/user_prefs.cgi"
-        test_response = session.get(test_url)
-        print(f"Test request status: {test_response.status_code}")
+        # Make a test request to verify login
+        test_response = session.get(f"{BUGZILLA_URL}/report.cgi?saved_report_id={REPORT_SAVED_ID}")
         
-        # Check if we're still logged in
-        if "Log in to Bugzilla" in test_response.text:
+        if test_response.status_code != 200:
+            print(f"Test request failed with status: {test_response.status_code}")
             raise HTTPException(
                 status_code=401,
-                detail="Login verification failed. Please check your credentials."
+                detail="Failed to access report after login"
+            )
+        
+        if "Log in to Bugzilla" in test_response.text:
+            print("Still getting login page after authentication")
+            raise HTTPException(
+                status_code=401,
+                detail="Login session not established"
             )
         
         print("Login successful!")
         return session
         
     except requests.RequestException as e:
-        print(f"Network error during login: {str(e)}")
+        print(f"Network error: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Network error during login: {str(e)}"
+            detail=f"Network error: {str(e)}"
         )
     except Exception as e:
-        print(f"Unexpected error during login: {str(e)}")
+        print(f"Login error: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Login error: {str(e)}"
+            detail=f"Login failed: {str(e)}"
         )
 
 def post_to_google_chat(teams_data):
