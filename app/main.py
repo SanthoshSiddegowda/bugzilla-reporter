@@ -50,7 +50,7 @@ def get_session_with_login():
         session = requests.Session()
         print(f"Attempting login to: {BUGZILLA_URL}")
         
-        # Get the login page first
+        # Get the login page first to get the token
         login_page = session.get(
             f"{BUGZILLA_URL}/report.cgi",
             headers={
@@ -62,27 +62,28 @@ def get_session_with_login():
         # Parse the login page
         soup = BeautifulSoup(login_page.text, 'html.parser')
         
-        # Get the login token from the form
+        # Get both login token and forgot password token
         login_token = soup.find('input', {'name': 'Bugzilla_login_token'})
-        if not login_token:
+        token = soup.find('input', {'id': 'token'})
+        
+        if not login_token or not token:
             raise HTTPException(
                 status_code=500,
-                detail="Could not find login token"
+                detail="Could not find required tokens"
             )
         
-        # Prepare login data
+        # Prepare login data with all required tokens
         login_data = {
             "Bugzilla_login": BUGZILLA_EMAIL.strip(),
             "Bugzilla_password": BUGZILLA_PASSWORD.strip(),
             "Bugzilla_login_token": login_token['value'],
+            "token": token['value'],
             "GoAheadAndLogIn": "Log in",
             "Bugzilla_remember": "on",
-            "Bugzilla_restrictlogin": "off"  # Uncheck restrict login
+            "Bugzilla_restrictlogin": "off"
         }
         
-        print("Login data prepared:", {k: v for k, v in login_data.items() if k not in ['Bugzilla_password', 'Bugzilla_login_token']})
-        
-        # Submit login form
+        # Submit login form with proper headers
         login_response = session.post(
             f"{BUGZILLA_URL}/report.cgi",
             data=login_data,
@@ -92,16 +93,24 @@ def get_session_with_login():
                 "Accept": "text/html,application/xhtml+xml",
                 "Origin": BUGZILLA_URL,
                 "Referer": f"{BUGZILLA_URL}/report.cgi"
-            }
+            },
+            allow_redirects=True
         )
         
         print(f"Login response status: {login_response.status_code}")
         print(f"Cookies received: {session.cookies.get_dict()}")
         
+        # Verify login success
         if "The username or password you entered is not valid" in login_response.text:
             raise HTTPException(
                 status_code=401,
                 detail="Invalid credentials"
+            )
+            
+        if "Bugzilla_login" not in session.cookies:
+            raise HTTPException(
+                status_code=401,
+                detail="Login failed - no session cookie received"
             )
         
         return session
@@ -156,6 +165,32 @@ def post_to_google_chat(teams_data):
             status_code=500, 
             detail=f"Failed to post to Google Chat: {response.text}"
         )
+
+@app.get("/")
+async def root():
+    """Root endpoint that returns API information"""
+    return {
+        "name": "Bugzilla Report API",
+        "version": "1.0.0",
+        "description": "API for fetching Bugzilla bug reports and posting to Google Chat",
+        "endpoints": {
+            "/": "This information",
+            "/bugzilla/report": "Get Bugzilla report and post to Google Chat"
+        },
+        "status": "active",
+        "documentation": {
+            "description": "Fetches bug status reports from Bugzilla and posts them to Google Chat",
+            "supported_statuses": [
+                "UNCONFIRMED",
+                "CONFIRMED",
+                "IN_PROGRESS",
+                "IN_PROGRESS_DEV",
+                "NEEDS_INFO",
+                "UNDER_REVIEW",
+                "RE-OPENED"
+            ]
+        }
+    }
 
 @app.get("/bugzilla/report")
 async def get_bugzilla_report():
