@@ -122,7 +122,7 @@ def get_session_with_login():
             detail=f"Login failed: {str(e)}"
         )
 
-def post_to_google_chat(teams_data, team_name: str):
+def post_to_google_chat(teams_data, team_name: str, google_chat_webhook: str):
     team_data = next((team for team in teams_data if team['team'].lower() == team_name.lower()), None)
     
     if not team_data:
@@ -171,7 +171,7 @@ def post_to_google_chat(teams_data, team_name: str):
         "text": message
     }
     
-    response = requests.post(GOOGLE_CHAT_WEBHOOK, json=payload)
+    response = requests.post(google_chat_webhook, json=payload)
     
     if response.status_code != 200:
         print(f"Error response: {response.text}")
@@ -184,40 +184,12 @@ def post_to_google_chat(teams_data, team_name: str):
 async def root():
     """Root endpoint that returns API information"""
     return {
-        "name": "Bugzilla Report API",
-        "version": "1.0.0",
-        "description": "API for fetching Bugzilla bug reports and posting to Google Chat",
-        "endpoints": {
-            "/": "This information",
-            "/bugzilla/report": {
-                "description": "Get Bugzilla report and post to Google Chat",
-                "parameters": {
-                    "team": {
-                        "description": "Team name to fetch report for",
-                        "type": "string",
-                        "default": "os",
-                        "example": "/bugzilla/report?notify_team=os"
-                    }
-                }
-            }
-        },
         "status": "active",
-        "documentation": {
-            "description": "Fetches bug status reports from Bugzilla and posts them to Google Chat",
-            "supported_statuses": [
-                "UNCONFIRMED",
-                "CONFIRMED",
-                "IN_PROGRESS",
-                "IN_PROGRESS_DEV",
-                "NEEDS_INFO",
-                "UNDER_REVIEW",
-                "RE-OPENED"
-            ]
-        }
+        "message": "Hello World! I am Bugzilla Report API"
     }
 
 @app.get("/current-day-status")
-async def get_bugzilla_report(notify_team: str = "os"):  # Default to "os" if no team specified
+async def get_bugzilla_report(notify_team: str = "os", google_chat_webhook: str = GOOGLE_CHAT_WEBHOOK):  # Default to "os" if no team specified
     try:
         # Create session and login
         session = get_session_with_login()
@@ -235,7 +207,7 @@ async def get_bugzilla_report(notify_team: str = "os"):  # Default to "os" if no
             "y_axis_field": "bug_status",
             "format": "table",
             "action": "wrap",
-            "saved_report_id": REPORT_SAVED_ID
+            "save_report_id": REPORT_SAVED_ID
         }
         
         # Get the report page
@@ -350,11 +322,11 @@ async def get_bugzilla_report(notify_team: str = "os"):  # Default to "os" if no
         
         print("notify_team", notify_team)
         # After processing the teams_data, post to Google Chat
-        post_to_google_chat(teams_data, notify_team)
+        post_to_google_chat(teams_data, notify_team, google_chat_webhook)
         
         return {
             "status": "success",
-            "report": teams_data
+            "message": "Report posted to Google Chat"
         }
         
     except requests.RequestException as e:
