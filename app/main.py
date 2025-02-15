@@ -122,35 +122,49 @@ def get_session_with_login():
             detail=f"Login failed: {str(e)}"
         )
 
-def post_to_google_chat(teams_data):
-    # Find OS team data
-    os_team = next((team for team in teams_data if team['team'].lower() == 'os'), None)
+def post_to_google_chat(teams_data, team_name: str):
+    team_data = next((team for team in teams_data if team['team'].lower() == team_name.lower()), None)
     
-    if not os_team:
-        print("OS team data not found")
+    if not team_data:
+        print(f"{team_name} team data not found")
         return
     
-    # Get current date in IST with human-readable format
+    # Get current date in IST
     ist_timezone = pytz.timezone('Asia/Kolkata')
     ist_time = datetime.now(ist_timezone)
     datetime_str = ist_time.strftime('%d %b %Y | %I:%M %p IST')
     
-    # Format the message
-    message = "🐞 *BUGZILLA STATUS REPORT - OS TEAM*\n"
+    # Construct Bugzilla report URL
+    report_url = (
+        f"{BUGZILLA_URL}/report.cgi?"
+        f"bug_severity=blocker&bug_severity=critical&bug_severity=major&"
+        f"bug_severity=normal&bug_severity=minor&bug_severity=trivial&"
+        f"bug_status=UNCONFIRMED&bug_status=CONFIRMED&bug_status=NEEDS_INFO&"
+        f"bug_status=IN_PROGRESS&bug_status=IN_PROGRESS_DEV&bug_status=UNDER_REVIEW&"
+        f"bug_status=RE-OPENED&"
+        f"product=BizomWeb&product=Mobile%20App&"
+        f"x_axis_field=version&y_axis_field=bug_status&"
+        f"format=table&action=wrap&"
+        f"saved_report_id={REPORT_SAVED_ID}"
+    )
+    
+    # Format the message with dynamic team name and link
+    message = f"🐞 *BUGZILLA STATUS REPORT - {team_name.upper()} TEAM*\n"
     message += f"📅 {datetime_str}\n"
     message += "─────────────────────────\n\n"
     
     # Status counts
-    message += f"• *UNCONFIRMED:* {os_team['UNCONFIRMED']}\n"
-    message += f"• *CONFIRMED:* {os_team['CONFIRMED']}\n"
-    message += f"• *IN_PROGRESS:* {os_team['IN_PROGRESS']}\n"
-    message += f"• *IN_PROGRESS_DEV:* {os_team['IN_PROGRESS_DEV']}\n"
-    message += f"• *NEEDS_INFO:* {os_team['NEEDS_INFO']}\n"
-    message += f"• *UNDER_REVIEW:* {os_team['UNDER_REVIEW']}\n"
-    message += f"• *RE-OPENED:* {os_team['RE-OPENED']}\n\n"
+    message += f"• *UNCONFIRMED:* {team_data['UNCONFIRMED']}\n"
+    message += f"• *CONFIRMED:* {team_data['CONFIRMED']}\n"
+    message += f"• *IN_PROGRESS:* {team_data['IN_PROGRESS']}\n"
+    message += f"• *IN_PROGRESS_DEV:* {team_data['IN_PROGRESS_DEV']}\n"
+    message += f"• *NEEDS_INFO:* {team_data['NEEDS_INFO']}\n"
+    message += f"• *UNDER_REVIEW:* {team_data['UNDER_REVIEW']}\n"
+    message += f"• *RE-OPENED:* {team_data['RE-OPENED']}\n\n"
     
-    # Total
-    message += "📊 *TOTAL ACTIVE ISSUES: " + str(os_team['total']) + "*"
+    # Total and link
+    message += f"📊 *TOTAL ACTIVE ISSUES: {team_data['total']}*\n\n"
+    message += f"🔗 <{report_url}|View Full Report>"
     
     # Post to Google Chat
     payload = {
@@ -175,7 +189,17 @@ async def root():
         "description": "API for fetching Bugzilla bug reports and posting to Google Chat",
         "endpoints": {
             "/": "This information",
-            "/bugzilla/report": "Get Bugzilla report and post to Google Chat"
+            "/bugzilla/report": {
+                "description": "Get Bugzilla report and post to Google Chat",
+                "parameters": {
+                    "team": {
+                        "description": "Team name to fetch report for",
+                        "type": "string",
+                        "default": "os",
+                        "example": "/bugzilla/report?notify_team=os"
+                    }
+                }
+            }
         },
         "status": "active",
         "documentation": {
@@ -192,8 +216,8 @@ async def root():
         }
     }
 
-@app.get("/bugzilla/report")
-async def get_bugzilla_report():
+@app.get("/current-day-status")
+async def get_bugzilla_report(notify_team: str = "os"):  # Default to "os" if no team specified
     try:
         # Create session and login
         session = get_session_with_login()
@@ -324,8 +348,9 @@ async def get_bugzilla_report():
                 print(f"Error processing team {team}: {str(e)}")
                 continue
         
+        print("notify_team", notify_team)
         # After processing the teams_data, post to Google Chat
-        post_to_google_chat(teams_data)
+        post_to_google_chat(teams_data, notify_team)
         
         return {
             "status": "success",
