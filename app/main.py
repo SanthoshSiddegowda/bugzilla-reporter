@@ -3,9 +3,6 @@ from fastapi.responses import JSONResponse
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-from pydantic import BaseModel
-import numpy as np
-import json
 from dotenv import load_dotenv
 import os
 from datetime import datetime
