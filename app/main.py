@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 import os
 from datetime import datetime
 import pytz  # Add this import at the top
+from app.services.google_chat import post_qa_status_to_chat
+from app.config import BUGZILLA_URL, GOOGLE_CHAT_WEBHOOK
 
 # Load environment variables
 load_dotenv()
@@ -329,4 +331,149 @@ async def get_bugzilla_report(notify_team: str = "os", google_chat_webhook: str 
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=f"Request failed: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing report: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Error processing report: {str(e)}")
+
+@app.get("/qa-status")
+async def get_qa_status(
+    google_chat_webhook: str = GOOGLE_CHAT_WEBHOOK,
+    from_date: str = None,
+    products: str = "BizomWeb,Mobile App"
+):
+    """Get QA status report and post to Google Chat"""
+    try:
+        session = get_session_with_login()
+        
+        params = {
+            "x_axis_field": "bug_status",
+            "y_axis_field": "qa_contact",
+            "z_axis_field": "",
+            "no_redirect": "1",
+            "query_format": "report-table",
+            "product": products.split(","),
+            "bug_status": [
+                "UNCONFIRMED", "CONFIRMED", "NEEDS_INFO",
+                "IN_PROGRESS", "IN_PROGRESS_DEV", "RESOLVED",
+                "VERIFIED", "UNDER_REVIEW", "RE-OPENED",
+                "REVIEWED"
+            ],
+            "resolution": [
+                "CLOSED_DATA_CORRECTION", "CLOSED_INFORMATION",
+                "CLOSED_LOG", "RELEASED", "---", "FIXED",
+                "INVALID", "WONTFIX", "DUPLICATE",
+                "WORKSFORME", "MIGRATED", "CLOSED"
+            ],
+            "chfield": "qa_contact",
+            "chfieldto": "Now",
+            "format": "table",
+            "action": "wrap"
+        }
+        
+        if from_date:
+            params["chfieldfrom"] = from_date
+        else:
+            params["chfieldfrom"] = "2025-02-19"
+        
+        response = session.get(f"{BUGZILLA_URL}/report.cgi", params=params)
+        
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail="Failed to fetch QA report")
+        
+        qa_data = parse_qa_data(response.text)
+        
+        # Post to Google Chat
+        post_qa_status_to_chat(qa_data, google_chat_webhook)
+        
+        return {
+            "status": "success",
+            "message": "QA status report posted to Google Chat",
+            "data": qa_data
+        }
+        
+    except Exception as e:
+        print(f"Error details: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing QA report: {str(e)}")
+
+def parse_qa_data(html_content: str) -> list:
+    """Parse QA data from HTML content"""
+    soup = BeautifulSoup(html_content, 'html.parser')
+    
+    # Find the main container table
+    container = soup.find('table', class_='tabular_report_container')
+    if not container:
+        raise HTTPException(status_code=404, detail="No report container found")
+    
+    # Get all rows from the table
+    rows = container.find_all('tr')
+    if not rows:
+        raise HTTPException(status_code=404, detail="No data rows found")
+        
+    # Define status columns in order (excluding Total)
+    status_columns = [
+        "UNCONFIRMED",
+        "CONFIRMED",
+        "NEEDS_INFO",
+        "IN_PROGRESS_DEV",
+        "RESOLVED"
+    ]
+    
+    # Process data rows
+    qa_data = []
+    
+    # Process each row
+    for row in rows:
+        cells = row.find_all('td')
+        if len(cells) < 2:  # Need at least QA contact and one status
+            continue
+            
+        qa_contact = cells[0].get_text(strip=True)
+        if not qa_contact or '@mobisy.com' not in qa_contact:
+            continue
+            
+        row_data = {
+            "qa_contact": qa_contact,
+            "statuses": {},
+            "total": 0
+        }
+        
+        # Process status cells in order (excluding Total)
+        for idx, status in enumerate(status_columns, 1):  # Start from 1 to skip QA contact
+            if idx < len(cells):
+                value = cells[idx].get_text(strip=True)
+                try:
+                    count = int(value) if value and value != '.' else 0
+                    if count > 0:  # Only include non-zero counts
+                        row_data["statuses"][status] = count
+                except ValueError:
+                    continue
+        
+        # Get total from the last cell
+        if len(cells) > len(status_columns) + 1:  # +1 for QA contact column
+            total_value = cells[len(status_columns) + 1].get_text(strip=True)
+            try:
+                row_data["total"] = int(total_value) if total_value and total_value != '.' else 0
+            except ValueError:
+                row_data["total"] = sum(row_data["statuses"].values())
+        
+        if row_data["total"] > 0:  # Only include rows with data
+            qa_data.append(row_data)
+    
+    # Add total row
+    if qa_data:
+        total_data = {
+            "qa_contact": "Total",
+            "statuses": {},
+            "total": 0
+        }
+        
+        # Calculate totals for each status
+        for qa in qa_data:
+            for status, count in qa["statuses"].items():
+                total_data["statuses"][status] = total_data["statuses"].get(status, 0) + count
+            total_data["total"] += qa["total"]  # Use the actual total from each QA
+        
+        qa_data.append(total_data)
+    
+    if not qa_data:
+        raise HTTPException(status_code=404, detail="No QA data found in table")
+    
+    return qa_data 
