@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 import requests
 from bs4 import BeautifulSoup
@@ -6,9 +6,11 @@ import pandas as pd
 from dotenv import load_dotenv
 import os
 from datetime import datetime
-import pytz  # Add this import at the top
+import pytz
 from app.services.google_chat import post_qa_status_to_chat
-from app.config import BUGZILLA_URL, GOOGLE_CHAT_WEBHOOK
+from app.config import BUGZILLA_URL, GOOGLE_CHAT_WEBHOOK, BITBUCKET_USERNAME, BITBUCKET_PASSWORD, BITBUCKET_URL
+from typing import List
+from app.services.bitbucket import BitbucketAPI
 
 # Load environment variables
 load_dotenv()
@@ -34,7 +36,8 @@ REPORT_SAVED_ID = os.getenv('REPORT_SAVED_ID')
 required_vars = [
     'BUGZILLA_EMAIL', 'BUGZILLA_PASSWORD', 'BUGZILLA_URL',
     'GOOGLE_CHAT_WEBHOOK_URL', 'GOOGLE_CHAT_SPACE_ID',
-    'GOOGLE_CHAT_KEY', 'GOOGLE_CHAT_TOKEN', 'REPORT_SAVED_ID'
+    'GOOGLE_CHAT_KEY', 'GOOGLE_CHAT_TOKEN', 'REPORT_SAVED_ID',
+    'BITBUCKET_USERNAME', 'BITBUCKET_PASSWORD', 'BITBUCKET_URL'
 ]
 
 missing_vars = [var for var in required_vars if not os.getenv(var)]
@@ -477,3 +480,69 @@ def parse_qa_data(html_content: str) -> list:
         raise HTTPException(status_code=404, detail="No QA data found in table")
     
     return qa_data 
+
+@app.get("/open-prs")
+async def get_all_prs(
+    authors: str = Query(
+        None, 
+        description="Filter PRs by authors (comma-separated, e.g., 'laxmikanthtd,sumithhegde')"
+    ),
+    webhook_url: str = Query(
+        None,
+        description="Optional custom Google Chat webhook URL. If not provided, default webhook will be used."
+    ),
+    skip_chat: bool = Query(
+        False,
+        description="Set to true to skip posting to Google Chat"
+    )
+):
+    """Get all open PRs across repositories"""
+    try:
+        if not BITBUCKET_USERNAME or not BITBUCKET_PASSWORD:
+            raise HTTPException(
+                status_code=500,
+                detail="Bitbucket credentials not configured"
+            )
+            
+        # Initialize Bitbucket API client
+        bitbucket = BitbucketAPI(
+            username=BITBUCKET_USERNAME,
+            app_password=BITBUCKET_PASSWORD,
+            workspace="bizom"
+        )
+        
+        # Get all open PRs with optional author filter
+        prs = bitbucket.get_all_open_prs(authors)
+        
+        # Post to Google Chat by default unless skip_chat is True
+        chat_posted = False
+        if not skip_chat:
+            message = bitbucket.format_prs_for_chat(prs)
+            payload = {"text": message}
+            
+            # Use provided webhook URL or fall back to default
+            chat_url = webhook_url or GOOGLE_CHAT_WEBHOOK
+            
+            response = requests.post(chat_url, json=payload)
+            
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to post to Google Chat: {response.text}"
+                )
+            chat_posted = True
+        
+        return {
+            "status": "success",
+            "posted_to_chat": chat_posted,
+            "webhook_used": "custom" if webhook_url else "default" if chat_posted else "none"
+        }
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"Error details: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing request: {str(e)}"
+        ) 
