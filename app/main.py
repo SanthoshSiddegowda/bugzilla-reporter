@@ -534,6 +534,7 @@ async def get_all_prs(
         
         return {
             "status": "success",
+            "data": prs,
             "posted_to_chat": chat_posted,
             "webhook_used": "custom" if webhook_url else "default" if chat_posted else "none"
         }
