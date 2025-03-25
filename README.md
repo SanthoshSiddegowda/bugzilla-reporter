@@ -1,126 +1,137 @@
-# BitZilla Report Bot
+# Bitzilla Report API Documentation
 
-A FastAPI service that automatically fetches team bug reports from Bugzilla and open pull requests from Bitbucket, posting status updates to Google Chat.
+## Overview
+
+The Bitzilla Report API is a FastAPI-based application that integrates with Bugzilla and Bitbucket to provide automated reporting and notifications for engineering teams. It helps teams track bugs, SLA misses, and other important metrics through Google Chat notifications.
 
 ## Features
 
-- Fetches real-time bug status from Bugzilla
-- Tracks open pull requests from Bitbucket
-- Posts formatted reports to Google Chat
-- Shows bug counts by status
-- Author-based PR filtering
-- Team-specific reports
-- Secure credential handling
-- Customizable webhooks
+- **Bugzilla Integration**: Authenticates with Bugzilla and retrieves bug reports
+- **Priority Bug Tracking**: Identifies and reports on high-priority bugs
+- **SLA Monitoring**: Tracks bugs that have missed SLA deadlines
+- **Current Day Status**: Provides daily bug status reports
+- **Google Chat Notifications**: Sends automated notifications to team channels
+- **Bitbucket Integration**: Connects with Bitbucket for repository information
 
-## Setup
+## Environment Setup
 
-1. Install dependencies:
+The application requires several environment variables to be set:
 
-```bash
-pip install -r requirements.txt
 ```
-
-2. Create a `.env` file in the root directory with the following variables:
-
-```bash
-# Bugzilla Configuration
-BUGZILLA_EMAIL=your_bugzilla_email@example.com
+BUGZILLA_EMAIL=your_bugzilla_email
 BUGZILLA_PASSWORD=your_bugzilla_password
-BUGZILLA_URL=https://bugzilla.example.com
-
-# Bitbucket Configuration
+BUGZILLA_URL=https://your_bugzilla_instance
+GOOGLE_CHAT_WEBHOOK=your_google_chat_webhook_url
 BITBUCKET_USERNAME=your_bitbucket_username
-BITBUCKET_PASSWORD=your_bitbucket_app_password
-BITBUCKET_URL=https://bitbucket.org
-
-# Google Chat Configuration
-GOOGLE_CHAT_WEBHOOK=your_webhook_url
+BITBUCKET_PASSWORD=your_bitbucket_password
+BITBUCKET_URL=https://your_bitbucket_instance
 ```
 
-3. Run the service:
-
-```bash
-uvicorn app.main:app --reload
-```
+A `.env.example` file is provided in the root directory as a template.
 
 ## API Endpoints
 
-### 1. Health Check
-```http
-GET /
-```
-Returns API status and version information.
+### Bugzilla Endpoints
 
-### 2. Bug Report Generation
-```http
-GET /current-day-status
-```
-Generates and posts bug status reports for specified teams.
+#### GET /bugzilla/get-priority-bug-miss
 
-Parameters:
-- `notify_team`: Team name (default: "OS")
-- `google_chat_webhook`: Custom webhook URL (optional)
-- `skip_chat`: Skip notification (default: false)
+Returns priority bug misses for a specific team and optionally sends a notification to Google Chat.
 
-### 3. Open Pull Requests
-```http
-GET /open-prs
-```
-Fetches and posts open pull request information.
+**Query Parameters:**
+- `notify_team` (string, default: "OS"): Team to notify
+- `google_chat_webhook` (string, optional): Custom webhook URL
+- `skip_chat` (boolean, default: false): Skip sending notification
 
-Parameters:
-- `authors`: Filter by authors (comma-separated)
-- `webhook_url`: Custom webhook URL (optional)
-- `skip_chat`: Skip notification (default: false)
+#### GET /bugzilla/current-day-status
 
-## Development
+Returns the current day's bug status for all teams and optionally sends a notification.
 
-### Project Structure
+**Query Parameters:**
+- `notify_team` (string, default: "OS"): Team to notify
+- `google_chat_webhook` (string, optional): Custom webhook URL
+- `skip_chat` (boolean, default: false): Skip sending notification
+
+#### GET /bugzilla/get-sla-missed-bugs
+
+Returns SLA missed bugs report for a specific team and optionally sends a notification.
+
+**Query Parameters:**
+- `notify_team` (string, default: "OS"): Team to notify
+- `google_chat_webhook` (string, optional): Custom webhook URL
+- `days` (integer, default: 3): Number of days to look back
+- `skip_chat` (boolean, default: false): Skip sending notification
+
+### Bitbucket Endpoints
+
+#### GET /bitbucket/open-prs
+
+Returns all open pull requests across repositories and optionally sends a notification to Google Chat.
+
+**Query Parameters:**
+- `authors` (string, optional): Filter PRs by authors (comma-separated, e.g., 'laxmikanthtd,sumithhegde')
+- `webhook_url` (string, optional): Custom webhook URL for Google Chat notifications
+- `skip_chat` (boolean, default: false): Skip sending notification
+
+## Authentication
+
+The application uses session-based authentication with Bugzilla, handling login tokens and cookies automatically. For Bitbucket, it uses basic authentication with the provided credentials.
+
+## Notification System
+
+The Google Chat notification system formats and sends messages to team channels with information about bugs, SLA misses, and daily status reports. Custom webhooks can be provided per request to send notifications to different channels.
+
+The notification system supports several message formats:
+
+- **Current Day Bug Status**: Shows a breakdown of bugs by status for a specific team
+- **Priority Bug Notifications**: Highlights high-priority bugs that have missed SLA deadlines
+- **SLA Missed Bugs**: Reports on all bugs that have missed their SLA deadlines
+- **Open Pull Requests**: Lists all open PRs in Bitbucket, optionally filtered by author
+
+All notifications include direct links to the relevant Bugzilla bugs or Bitbucket pull requests for easy access.
+
+## Project Structure
+
 ```
 bugzilla/
 ├── app/
 │   ├── main.py              # FastAPI application
+│   ├── routers/
+│   │   ├── bugzilla.py      # Bugzilla API endpoints
+│   │   └── bitbucket.py     # Bitbucket API endpoints
 │   └── services/
 │       ├── bitbucket.py     # Bitbucket API service
 │       └── google_chat.py   # Google Chat service
-├── docs/
-│   ├── USER_GUIDE.md        # User documentation
-│   └── DETAILED_GUIDE.md    # Technical documentation
+├── doc/
+│   └── README.md            # This documentation
 ├── requirements.txt         # Python dependencies
-└── README.md               # This file
+└── README.md               # Project overview
 ```
 
-### Adding New Features
-1. Create new service in `app/services/`
-2. Add endpoints in `app/main.py`
-3. Update documentation in `docs/`
-4. Add tests in `tests/`
+## Running the Application
 
-## 🚨 Security Notice
+1. Install dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
 
-This application requires sensitive credentials and API keys. Never commit the actual `.env` file to version control. Use `.env.example` as a template and create your own `.env` file with your credentials.
+2. Set up environment variables (create a `.env` file based on `.env.example`)
 
-### Security Best Practices
-- Use HTTPS for all API calls
-- Rotate credentials periodically
-- Monitor for unauthorized access
-- Keep webhook URLs confidential
-- Store sensitive data in environment variables
-- Implement proper error handling
-- Sanitize error messages
-- Monitor access patterns
+3. Run the FastAPI application:
+   ```
+   uvicorn app.main:app --reload
+   ```
 
-## Support
+4. Access the API documentation at `http://localhost:8000/docs`
 
-For technical support or feature requests:
-1. Open a GitHub issue
-2. Contact the development team
-3. Check the logs for detailed error messages
-4. Verify environment variables
-5. Check team name case sensitivity
+5. Use the API endpoints with appropriate query parameters as documented above
 
-## License
+## Error Handling
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-    
+The application includes comprehensive error handling for:
+- Authentication failures
+- API request failures
+- Missing environment variables
+- Invalid team names
+- Empty report results
+
+Errors are returned as HTTP exceptions with appropriate status codes and detailed messages.
