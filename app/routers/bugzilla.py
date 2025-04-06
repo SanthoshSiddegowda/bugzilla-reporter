@@ -188,6 +188,85 @@ def format_response(
         "webhook_used": webhook_type if chat_posted else "none"
     }
 
+@router.get("/get-priority-bug")
+async def get_priority_bug_report(
+    notify_team: str = "OS",
+    google_chat_webhook: str = None,
+    skip_chat: bool = False
+)-> dict:
+    """
+    Get Priority report for a specific team and optionally notify via Google Chat.
+    Args:
+        notify_team (str): Team to notify (default: "OS")
+        google_chat_webhook (str, optional): Custom webhook URL for Google Chat notifications
+        skip_chat (bool): Flag to skip sending notification to Google Chat (default: False)
+    Returns:
+        dict: Dictionary containing:
+            - status (str): Operation status
+            - data (dict): Priority report details including team, bugs list, and count
+            - posted_to_chat (bool): Whether notification was sent to Google Chat
+            - webhook_used (str): Type of webhook used ('custom', 'default', or 'none')
+    Raises:
+        HTTPException: If there are errors during API requests or processing
+    """
+    try:
+        session = get_session_with_login()
+        
+        params = {
+            "bug_severity": ["blocker", "critical"],
+            "bug_status": [ "CONFIRMED", "NEEDS_INFO", "IN_PROGRESS", "IN_PROGRESS_DEV", "UNDER_REVIEW", "RE-OPENED"],
+            "chfield": "[Bug creation]",
+            "priority": ["Highest", "High", "Normal", "Low", "Lowest", "---"],
+            "product": ["BizomWeb", "ELL", "Mobile App", "OneView DIY"],
+            "version": notify_team,
+            "action": "wrap",
+            "ctype": "csv"
+        }
+        
+        response = session.get(f"{BUGZILLA_URL}/buglist.cgi", params=params)
+        
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Failed to fetch report: {response.text}"
+            )
+            
+        bugs = process_csv_response(response)
+        
+        if not bugs:
+            return {
+                "status": "success",
+                "data": "No priority bugs found",
+                "posted_to_chat": False,
+                "webhook_used": "none"
+            }
+                
+        # Format the data for return
+        result = {
+            "team": notify_team,
+            "bugs": bugs,
+            "count": len(bugs)
+        }
+        
+        # Post to Google Chat if needed
+        chat_posted = False
+        webhook_type = "none"
+        if not skip_chat and bugs:
+            chat_service, webhook_type = get_chat_service(google_chat_webhook)
+            chat_service.send_priority_bug_notification(result, notify_team)
+            chat_posted = True
+            
+        return format_response(result, chat_posted, webhook_type)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error processing request: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing request: {str(e)}"
+        )
+    
 @router.get("/get-priority-bug-miss")
 async def get_priority_bug_report(
     notify_team: str = "OS", 
